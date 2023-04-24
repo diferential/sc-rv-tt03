@@ -2,6 +2,7 @@ package scriv
 
 import spinal.core._
 import spinal.core.sim._
+// import org.scalatest.Assertions._
 
 object ScrivCpuTest extends App {
   Config.sim.compile(ScrivCpu()).doSim { dut =>
@@ -14,12 +15,15 @@ object ScrivCpuTest extends App {
       dut.io.cond0.randomize()
       dut.io.cond1.randomize()
 
+      println(s"Advancing ${dut.io.cond0.toBoolean} ${dut.io.cond1.toBoolean}")
+
       // Wait a rising edge on the clock
-      dut.clockDomain.waitRisingEdge()
+      dut.clockDomain.waitSampling()
 
       // Check that the dut values match with the reference model ones
       val modelFlag = modelState == 0 || dut.io.cond1.toBoolean
-      assert(dut.io.state.toInt == modelState)
+      assert(dut.io.state.toInt == modelState,
+             s"failed ${dut.io.state.toInt} == $modelState ")
       assert(dut.io.flag.toBoolean == modelFlag)
 
       // Update the reference model value
