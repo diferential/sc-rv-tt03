@@ -7,13 +7,14 @@ import spinal.lib.toGray
 case class ScrivCpu() extends Component {
   val io = new Bundle {
     // TinyTapeout3 interface.
-    val tt_in = in Bits (8 bits)
-    val tt_out = out Bits (8 bits)
+    val io_in = in Bits (8 bits)
+    val io_out = out Bits (8 bits)
   }
+  noIoPrefix();
 
   val mbox = ScrivMailbox();
-  mbox.io.tt_in := io.tt_in;
-  io.tt_out := mbox.io.tt_out;
+  mbox.io.tt_in := io.io_in;
+  io.io_out := mbox.io.tt_out;
 
   val masterClock = mbox.masterClock;
 

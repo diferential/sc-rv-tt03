@@ -12,8 +12,9 @@ object Config {
       resetKind = SYNC
     ),
     onlyStdLogicVectorAtTopLevelIo = true,
-    genLineComments = true
-  )
+    genLineComments = true,
+    noRandBoot = true
+  ).withoutEnumString()
 
   def sim = SimConfig.withConfig(spinal).withVcdWave.withIVerilog
 }

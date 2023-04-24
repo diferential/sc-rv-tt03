@@ -94,7 +94,7 @@ case class ScrivMailbox() extends Component {
   io.outbox.ready := False;
 
   val c = new ClockingArea(masterClock) {
-    val state_cnt = Reg(UInt(6 bits)) init 0;
+    val state_cnt = Reg(UInt(8 bits)) init 0;
     state_cnt := state_cnt - 1;
     val state_cnt_zero = !state_cnt.orR;
 
@@ -121,10 +121,10 @@ case class ScrivMailbox() extends Component {
         ffSerDataDone.io.s := io.tt_in(4);
 
         when(ffSerDataPresent.io.q) {
-          inbox_storage := inbox_storage((MBOX_BITS - 1) downto 1) ## ffSerDataIn.io.q;
+          inbox_storage := inbox_storage((MBOX_BITS - 2) downto 0) ## ffSerDataIn.io.q;
         }
 
-        val inbox_cnt_shifted = io.inbox.payload(7 downto 4) << 2;
+        val inbox_cnt_shifted = io.inbox.payload(11 downto 4);
         val jumpCounted = (next: State) => {
           goto(next);
           state_cnt.assignFromBits(inbox_cnt_shifted);
@@ -152,7 +152,7 @@ case class ScrivMailbox() extends Component {
       def outboxDataReadyAndEnoughTimeLeft(cycleWidth: Int): Bool = {
         assert(MBOX_BITS % cycleWidth == 0, s"$MBOX_BITS must be divisible by $cycleWidth");
         val needCycles = MBOX_BITS / cycleWidth;
-        io.outbox.valid && state_cnt < needCycles;
+        io.outbox.valid && state_cnt > needCycles;
       }
 
       def handleOutbox(cycleWidth: Int, callback: Fragment[Bits] => Area) = new Area {
@@ -170,6 +170,7 @@ case class ScrivMailbox() extends Component {
         } otherwise {
           outWord.fragment := outbox((MBOX_BITS - 1) downto (MBOX_BITS - cycleWidth));
           outWord.last := outCyclesLeft === 1;
+          outCyclesLeft := outCyclesLeft - 1;
 
           outbox := outbox.rotateLeft(cycleWidth);
         }
