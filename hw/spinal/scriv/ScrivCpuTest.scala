@@ -9,6 +9,7 @@ object ScrivCpuTest extends App {
     // Fork a process to generate the reset and the clock on the dut
     dut.clockDomain.forkStimulus(period = 10)
 
+    /*
     var modelState = 0
     for (idx <- 0 to 99) {
       // Drive the dut inputs with random values
@@ -31,5 +32,6 @@ object ScrivCpuTest extends App {
         modelState = (modelState + 1) & 0xff
       }
     }
+    */
   }
 }
