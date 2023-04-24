@@ -11,7 +11,8 @@ object Config {
       resetActiveLevel = HIGH,
       resetKind = SYNC
     ),
-    onlyStdLogicVectorAtTopLevelIo = true
+    onlyStdLogicVectorAtTopLevelIo = true,
+    genLineComments = true
   )
 
   def sim = SimConfig.withConfig(spinal).withVcdWave.withIVerilog

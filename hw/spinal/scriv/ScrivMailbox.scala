@@ -5,71 +5,11 @@ import spinal.lib._
 import spinal.lib.fsm._
 import spinal.core
 
-class ScrivReg(sz: Int) extends Bundle {
-  val value = Reg(Bits(sz bits)) init 0;
-}
-
-class ScrivRotatingReg(sz: Int) extends ScrivReg(sz) {
-  val low_nibble = value(3 downto 0);
-  val high_nibble_in = Bits(4 bits);
-  val high_nibble_push = Bool();
-
-  def push(nibble: Bits): Unit = {
-    high_nibble_in := nibble;
-    high_nibble_push := True;
-  }
-
-  def pop(nibble: Bits): Bits = {
-    high_nibble_push := True;
-    low_nibble;
-  }
-}
-
-class ScrivMutex extends Bundle with IMasterSlave {
-  val ask = Bool ();
-  val grant = Bool ();
-
-  override def asMaster(): Unit = {
-    out(ask)
-    in(grant)
-  }
-}
-
-// val x = new StreamArbiter;
-
-class ScrivMutexArbiter(val portCount : Int) extends Component {
-  val io = new Bundle {
-    val threads = Vec(slave(new ScrivMutex), portCount)
-  }
-
-  val lastGrant = Vec(Reg(Bool()) init (False), portCount);
-  // If we still have an ask that was a grant, we'll keep that locked.
-  val keepGrant = (io.threads, lastGrant).zipped.map(_.ask & _).reduce(_ | _)
-  val newGrant = OHMasking.first(Vec(io.threads.map(_.ask)))
-
-  // io.threads(0).grant := io.threads(0).ask;
-
-  /*
-  io.threads.foreach {
-    t => t.grant := False
-  }
-  */
-
-  /*
-  io.threads.zipWithIndex.foreach {
-    case (t, index) => {
-      t.grant := Mux(keepGrant, lastGrant(index), newGrant(index));
-    }
-  };
-  */
-}
-
 // RS flip flop blackbox.
-// TODO: import blackbox Verilog file.
 case class ScrivBB_RSFF() extends BlackBox {
   val io = new Bundle {
-    val r = Bool().asInput()
-    val s = Bool().asInput()
+    val r = in Bool ()
+    val s = in Bool ()
     val q = out Bool ()
   }
 
@@ -89,10 +29,11 @@ case class ScrivBB_RSFF() extends BlackBox {
   }
 
   noIoPrefix();
+  addRTLPath("./hw/verilog/ScrivBlackbox.v")
 }
 
 case class ScrivMailbox() extends Component {
-  val MBOX_BITS = 24;
+  val MBOX_BITS = 28;
 
   val io = new Bundle {
     // TinyTapeout3 interface.
@@ -103,6 +44,8 @@ case class ScrivMailbox() extends Component {
     val out_rst = out Bool ();
 
     val inbox = master(Flow(Bits(MBOX_BITS bits)))
+    val outbox = slave(Stream(Bits(MBOX_BITS bits)))
+    val address = out Bits (4 bits);
   }
 
   val masterClock = ClockDomain.internal(
@@ -148,22 +91,7 @@ case class ScrivMailbox() extends Component {
   ffSerDataIn.idle();
   ffSerDataPresent.idle();
   ffSerDataDone.idle();
-
-  val outbox_mutex = master(new ScrivMutex);
-  outbox_mutex.grant := False
-  outbox_mutex.ask := False
-
-  /*
-  // TODO: make this part of the port.
-  val outbox_mutex2 = master(new ScrivMutex);
-  outbox_mutex.ask := False;
-  outbox_mutex2.ask := False;
-
-  val arbiter = new ScrivMutexArbiter(2);
-  arbiter.io.threads(0).ask := outbox_mutex.ask;
-  outbox_mutex.grant := arbiter.io.threads(0).grant;
-  arbiter.io.threads(1) <> outbox_mutex2;
-  */
+  io.outbox.ready := False;
 
   val c = new ClockingArea(masterClock) {
     val state_cnt = Reg(UInt(6 bits)) init 0;
@@ -205,18 +133,11 @@ case class ScrivMailbox() extends Component {
         val cmd = io.inbox.payload(3 downto 0);
         when(io.inbox.valid) {
           switch(cmd) {
-            is(B"4'h0") {
-              jumpCounted(stateSerialIn)
-            }
-            is(B"4'h1") {
-              blockAddress := io.inbox.payload(7 downto 4);
-            }
-            is(B"4'h2") {
-              jumpCounted(stateChainOutput);
-            }
-            is(B"4'h3") {
-              jumpCounted(stateOutsideOutput);
-            }
+            is(B"4'h0") { /* idle */ }
+            is(B"4'h1") { jumpCounted(stateSerialIn) }
+            is(B"4'h2") { blockAddress := io.inbox.payload(7 downto 4); }
+            is(B"4'h3") { jumpCounted(stateChainOutput); }
+            is(B"4'h4") { jumpCounted(stateOutsideOutput); }
           }
         }
       } whenIsInactive {
@@ -225,18 +146,45 @@ case class ScrivMailbox() extends Component {
         ffSerDataDone.clear();
       }
 
-      // TODO: Do not flop data out if less than X cycles remaining.
-      // TODO: Get lock on output.
+      val outbox = Reg(Bits(MBOX_BITS bits)) init (0);
+      val outCyclesLeft = Reg(UInt(4 bits)) init 0;
 
-      val outbox = Reg(Bits(MBOX_BITS bits)) init (0) allowUnsetRegToAvoidLatch;
+      def outboxDataReadyAndEnoughTimeLeft(cycleWidth: Int): Bool = {
+        assert(MBOX_BITS % cycleWidth == 0, s"$MBOX_BITS must be divisible by $cycleWidth");
+        val needCycles = MBOX_BITS / cycleWidth;
+        io.outbox.valid && state_cnt < needCycles;
+      }
+
+      def handleOutbox(cycleWidth: Int, callback: Fragment[Bits] => Area) = new Area {
+        val outWord = Fragment(Bits(cycleWidth bits));
+
+        when(outCyclesLeft === 0) {
+          when(outboxDataReadyAndEnoughTimeLeft(cycleWidth)) {
+            outbox := io.outbox.payload;
+            outCyclesLeft := MBOX_BITS / cycleWidth;
+            io.outbox.ready := True; // acknowledge data.
+          }
+
+          outWord.fragment := 0;
+          outWord.last := False;
+        } otherwise {
+          outWord.fragment := outbox((MBOX_BITS - 1) downto (MBOX_BITS - cycleWidth));
+          outWord.last := outCyclesLeft === 1;
+
+          outbox := outbox.rotateLeft(cycleWidth);
+        }
+
+        callback(outWord)
+      }
 
       stateOutsideOutput.whenIsActive {
-        io.tt_out := outbox((MBOX_BITS - 1) downto (MBOX_BITS - 8));
-        outbox := outbox.rotateLeft(8);
-
-        // TODO wait for lock
-        // TODO exit state machine
-        // TODO provide writing capability to outbox register
+        handleOutbox(
+          7,
+          word =>
+            new Area {
+              io.tt_out := word.fragment ## word.last;
+            }
+        );
 
         when(state_cnt_zero) {
           goto(stateSerialIn);
@@ -248,41 +196,43 @@ case class ScrivMailbox() extends Component {
       val blockIsLast = blockAddress.andR;
       val blockIsFirst = !blockAddress.orR;
 
+      io.address := blockAddress;
+
+      def handleInbox(cycleWidth: Int) = new Area {
+        // tt_in ends with 2 bits ## fragment.last ## clk.
+        inbox_storage := inbox_storage((MBOX_BITS - 1) downto cycleWidth) ## io.tt_in((cycleWidth + 1) downto 2);
+        io.inbox.valid := io.tt_in(1);
+      }
+
       stateChainOutput.whenIsActive {
-        // Output to next block.
         when(blockIsFirst) {
           // First block can be used to clock 0 and then 1 with the two nibbles.
           io.tt_out := B"8'h1";
         } elsewhen (blockIsLast) {
           // Last block keeps zeros for safety to not clock the next design.
           io.tt_out := B"8'h0";
+          handleInbox(2);
         } otherwise {
-          outbox_mutex.ask := True;
-
-          assert(MBOX_BITS % 3 == 0);
-          val needCycles = MBOX_BITS / 3;
-          assert(needCycles <= 8);
-          val haveCycles = state_cnt < 8;
-
-          when(outbox_mutex.grant & haveCycles) {
-            // Output two nibbles with 3 useful bits and clock toggle.
-            // The controller will shift by 4, push data in, shift by another 4 and clock again.
-            val outBits = outbox((MBOX_BITS - 1) downto (MBOX_BITS - 3));
-            io.tt_out := outBits ## B"0" ## outBits ## B"1";
-            outbox := outbox.rotateLeft(3);
-          }
+          handleInbox(2);
+          handleOutbox(
+            2,
+            word =>
+              new Area {
+                val wordAndLast = word.fragment ## word.last;
+                io.tt_out := wordAndLast ## B"0" ## wordAndLast ## B"1";
+              }
+          );
         }
-
-        // TODO read from previous block.
 
         when(state_cnt_zero) {
           goto(stateSerialIn);
         }
       }
 
+      /// XXXXXXXXXX ///////////////////////////////////////////
       // TODO(emilian): deal with 8.5 bit new scan chain design.
+      /// XXXXXXXXXX ///////////////////////////////////////////
     }
-
   } // masterClock
 }
 
