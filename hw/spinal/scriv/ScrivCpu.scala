@@ -19,20 +19,31 @@ case class ScrivCpu() extends Component {
   val masterClock = mbox.masterClock;
 
   val c = new ClockingArea(masterClock) {
-    val counter = Reg(UInt(16 bits)) init 0
+    // sv-rv-tt03-block1 has 24 bits, the rest 16.
+    val counter = Reg(UInt(24 bits)) init 0
     val inc_on = Reg(UInt(1 bit)) init 0
 
     // Always output the counter, informational (cmd = 0).
     mbox.io.outbox.valid := True
-    mbox.io.outbox.payload := B"8'h0" ## counter ## B"4'h0";
+
+    // sc-rv-tt03-2..4 has this
+    // mbox.io.outbox.payload := B"8'h0" ## counter ## B"4'h0";
+    //
+    // sv-rv-tt03-block1 has this.
+    mbox.io.outbox.payload := counter ## B"4'h0";
 
     val cmd = mbox.io.inbox.payload(3 downto 0);
     when(mbox.io.inbox.valid) {
       switch(cmd) {
         is(B"4'ha") { inc_on := mbox.io.inbox.payload(4).asUInt }
+        // only sv-rv-tt03-block1 has this.
+        is(B"4'hb") { counter := mbox.io.inbox.payload(27 downto 4).asUInt }
+        default {
+          // only sv-rv-tt03-block1 has this.
+          counter := (counter.asBits ^ mbox.io.inbox.payload(27 downto 4)).asUInt;
+        }
       }
 
-      counter := (counter.asBits ^ mbox.io.inbox.payload(19 downto 4)).asUInt;
     } otherwise {
       counter := counter + inc_on;
     }
