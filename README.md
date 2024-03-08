@@ -33,9 +33,9 @@ The external pins controlling the scan chain are as follows:
 - **data in** - scan chain data input (from pin, or local to a design from SC8 of the previous design)
 - **data out** - scan chain data output (into pin, or local to a design it is the SC8 to next SC0).
 
-The following diagram has the 
+The following diagram has the illustration of the state:
 
-![Scan chain diagram](assets/scan_chain1.svg | width=400)
+![Scan chain diagram](assets/scan_chain1.svg)
 
 ## Escaping the scan chain -- fast clocking
 
